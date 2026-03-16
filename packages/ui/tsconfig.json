@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src/lib",
+    "declaration": true
+  },
+  "include": ["src/lib/**/*.ts", "src/lib/**/*.svelte"]
+}

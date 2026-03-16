@@ -1,0 +1,23 @@
+{
+  "name": "codegraph-cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "codegraph": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "codegraph-core": "workspace:*",
+    "commander": "^13.1.0",
+    "chalk": "^5.4.1",
+    "cli-progress": "^3.12.0"
+  },
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  }
+}
