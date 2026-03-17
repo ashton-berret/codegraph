@@ -1,9 +1,11 @@
 # CodeGraph — Complete Specification
 
-> **Version:** 1.0
-> **Last Updated:** 2026-03-16
-> **Status:** Pre-development
+> **Version:** 1.1
+> **Last Updated:** 2026-03-17
+> **Status:** Phase 1 Complete
 > **Author:** Ashton Berret
+>
+> **See also:** [`progress.md`](./progress.md) — per-phase implementation plans, decisions, and status
 
 ---
 
@@ -86,22 +88,22 @@ packages/core/
 ├── vitest.config.ts
 │
 ├── src/
-│   ├── index.ts                    # Public API barrel export
+│   ├── index.ts                    # Public API barrel export ✅
 │   │
 │   ├── config/
-│   │   ├── languages.ts            # Language registry (ts, svelte, prisma)
-│   │   └── ignore.ts               # .gitignore + custom ignore pattern handling
+│   │   ├── languages.ts            # Language registry (ts, svelte, prisma) ✅
+│   │   └── ignore.ts               # .gitignore + custom ignore pattern handling ✅
 │   │
 │   ├── walker/
 │   │   └── filesystem.ts           # Repo scanner — walks files, respects ignores,
-│   │                               # chunks by byte budget, yields { path, size, lang }
+│   │                               # chunks by byte budget, yields { path, size, lang } ✅
 │   │
 │   ├── parser/
-│   │   ├── tree-sitter.ts          # Tree-sitter init, grammar loading, AST caching
+│   │   ├── tree-sitter.ts          # Tree-sitter init, grammar loading, AST caching ✅
 │   │   ├── extract.ts              # Unified extraction coordinator — routes each file
-│   │   │                           # to the correct query set, returns ExtractedSymbols
+│   │   │                           # to the correct query set, returns ExtractedSymbols ✅
 │   │   └── queries/
-│   │       ├── typescript.ts       # TS/JS extraction (see 3.2)
+│   │       ├── typescript.ts       # TS/JS extraction (see 3.2) ✅
 │   │       ├── svelte.ts           # Svelte extraction (see 3.3)
 │   │       └── prisma.ts           # Prisma extraction (see 3.4)
 │   │
@@ -141,9 +143,11 @@ packages/core/
     │   │   ├── src/lib/stores.ts
     │   │   └── prisma/schema.prisma
     │   └── ts-library/             # Plain TS with imports/exports
-    │       ├── src/auth/service.ts
-    │       ├── src/auth/validate.ts
-    │       └── src/index.ts
+    │       ├── src/auth/service.ts      # Class with visibility, static, async, type-only import
+    │       ├── src/auth/validate.ts     # Exported function with params + return type
+    │       ├── src/models/types.ts      # Interfaces, type aliases, enums, variables, arrow fns
+    │       ├── src/models/index.ts      # Re-exports and type-only re-exports
+    │       └── src/index.ts             # Barrel exports, export const
     ├── parser/
     │   ├── typescript.test.ts
     │   ├── svelte.test.ts
@@ -182,7 +186,10 @@ deserializeGraph(data: SerializedGraph): KnowledgeGraph   // → hydrated graph 
 // === Types (re-exported) ===
 KnowledgeGraph, GraphNode, GraphEdge, NodeType, EdgeType,
 CommunityResult, ProcessTrace, ImpactResult, ChangeImpact,
-SearchResult, BuildOptions, SerializedGraph
+SearchResult, BuildOptions, SerializedGraph,
+// Extraction types (Phase 1)
+ExtractedDeclaration, ExtractedImport, ExtractedExport, ExtractedCall,
+ParamInfo, TypeScriptExtractionResult
 ```
 
 `BuildOptions`:
@@ -197,20 +204,104 @@ interface BuildOptions {
 
 ### 3.2 TypeScript / JavaScript Extraction
 
-Tree-sitter queries extract:
+**Status: Fully implemented** in `packages/core/src/parser/queries/typescript.ts`.
+
+Tree-sitter AST walking extracts the following symbol kinds:
 
 | Symbol Kind | What's Captured |
 |---|---|
-| Function | name, params (names + types), return type, exported?, async?, line range |
+| Function | name, params (names + types + optional?), return type, exported?, async?, line range |
 | Class | name, exported?, heritage (extends/implements), line range |
-| Method | name, parent class, visibility, static?, async?, line range |
-| Interface | name, exported?, extends, properties with types, line range |
-| TypeAlias | name, exported?, underlying type text, line range |
-| Enum | name, exported?, members, line range |
-| Variable | name, exported?, inferred/annotated type, const?, line range |
+| Method | name, parent class, visibility (public/private/protected), static?, async?, params, returnType, line range |
+| Interface | name, exported?, extends list, properties with types, line range |
+| TypeAlias | name, exported?, underlying type text (RHS of `=`), line range |
+| Enum | name, exported?, member names, line range |
+| Variable | name, exported?, annotated type, const?, line range |
 | Import | source path, imported names (named/default/namespace), is type-only? |
-| Export | local name, exported name, re-export source |
-| Call site | callee name/expression, arguments count, containing function, line |
+| Export | local name, exported name, re-export source, direct declaration exports |
+| Call site | callee name/expression, arguments count, containing symbol, line |
+
+Arrow functions assigned to `const`/`let` are extracted as `kind: 'function'` with `isConst: true`, including params and returnType.
+
+#### Extraction Interfaces
+
+```typescript
+interface ParamInfo {
+    name: string
+    type?: string
+    optional?: boolean
+}
+
+interface ExtractedDeclaration {
+    id: string                          // `${filePath}#${kind}:${name}:${startLine}`
+    kind: 'function' | 'class' | 'method' | 'interface' | 'type_alias' | 'enum' | 'variable'
+    name: string
+    filePath: string
+    startLine: number
+    endLine: number
+    exported: boolean
+    async?: boolean                     // functions/methods — AST-based, not string matching
+    parentName?: string                 // methods — parent class name
+    params?: ParamInfo[]                // functions/methods — parameter metadata
+    returnType?: string                 // functions/methods — return type annotation
+    heritage?: {                        // classes — extends/implements
+        extends?: string
+        implements?: string[]
+    }
+    visibility?: 'public' | 'private' | 'protected'   // methods
+    isStatic?: boolean                  // methods
+    interfaceExtends?: string[]         // interfaces — extended interfaces
+    properties?: { name: string; type?: string }[]     // interfaces — property signatures
+    typeText?: string                   // type aliases — RHS text
+    members?: string[]                  // enums — member names
+    varType?: string                    // variables — type annotation
+    isConst?: boolean                   // variables/arrow functions
+}
+
+interface ExtractedImport {
+    id: string
+    kind: 'import'
+    filePath: string
+    startLine: number
+    endLine: number
+    source: string
+    defaultImport?: string
+    namespaceImport?: string
+    namedImports: string[]
+    isTypeOnly?: boolean                // `import type { ... }`
+}
+
+interface ExtractedExport {
+    id: string
+    kind: 'export'
+    filePath: string
+    startLine: number
+    endLine: number
+    name: string
+    exportedName?: string
+    source?: string
+    isDefault: boolean
+    isReExport: boolean
+}
+
+interface ExtractedCall {
+    id: string
+    kind: 'call'
+    filePath: string
+    startLine: number
+    endLine: number
+    callee: string
+    containingSymbol?: string           // e.g. "ClassName.methodName" or "functionName"
+    argumentsCount?: number
+}
+```
+
+#### Implementation Details
+
+- **AST-based async detection:** Uses `hasUnnamedChild(node, 'async')` instead of string matching, preventing false positives (e.g., a method named `asyncTask` is not detected as async).
+- **`containingSymbol` tracking:** The `walkNode` function tracks the current container through class method bodies, so `validate(token)` inside `AuthService.login()` gets `containingSymbol: "AuthService.login"`.
+- **Export records for direct declarations:** `export function foo()`, `export class Bar`, `export const X`, `export interface I`, `export enum E`, and `export type T` all generate proper `ExtractedExport` records in addition to their declaration records.
+- **Arrow function detection:** `const fn = (x: number): string => { ... }` is extracted as `kind: 'function'` with `isConst: true`, params, and returnType. The walker recurses into arrow function bodies for nested call extraction.
 
 ### 3.3 Svelte Extraction
 
@@ -853,13 +944,21 @@ The MCP server is stateless per-request — it loads the graph from disk, answer
 
 ## 10. Build Phases
 
-### Phase 1 — Parse + Extract (weeks 1-3)
+### Phase 1 — Parse + Extract (weeks 1-3) **COMPLETE**
 
-- Filesystem walker with ignore patterns
-- Tree-sitter TypeScript/JavaScript parser + queries
-- Symbol extraction (functions, classes, imports, calls, exports)
-- Unit tests against fixture repos
-- **Milestone:** "Here are all symbols in a given project"
+- ~~Filesystem walker with ignore patterns~~
+- ~~Tree-sitter TypeScript/JavaScript parser + queries~~
+- ~~Symbol extraction (functions, classes, methods, interfaces, type aliases, enums, variables, imports, calls, exports)~~
+- ~~Unit tests against fixture repos (39 tests passing)~~
+- **Milestone:** ~~"Here are all symbols in a given project"~~
+
+**Implemented files:**
+- `config/languages.ts` — language registry
+- `config/ignore.ts` — comprehensive ignore patterns (directories, extensions, files)
+- `walker/filesystem.ts` — recursive repo scanner
+- `parser/tree-sitter.ts` — tree-sitter initialization and parsing
+- `parser/extract.ts` — extraction coordinator
+- `parser/queries/typescript.ts` — full TypeScript extraction with all symbol kinds and metadata
 
 ### Phase 2 — Resolve + Graph (weeks 3-6)
 
@@ -1010,10 +1109,14 @@ The repo has the correct monorepo skeleton (core/cli/web packages) with mostly e
 
 **Files with real implementation (KEEP these):**
 - `packages/core/src/config/languages.ts` (25 lines) — maps file extensions to supported languages. Working code.
-- `packages/core/src/config/ignore.ts` (227 lines) — comprehensive ignore pattern system with built-in defaults, extension filtering, and directory exclusions. Working code.
-- `packages/core/src/walker/filesystem.ts` (22 lines) — stubbed function signature for `scanRepository()`. Worth keeping as a starting point.
+- `packages/core/src/config/ignore.ts` (226 lines) — comprehensive ignore pattern system with built-in defaults, extension filtering, and directory exclusions. Working code.
+- `packages/core/src/walker/filesystem.ts` — repo scanner, scans directories respecting ignore patterns. Working code.
+- `packages/core/src/parser/tree-sitter.ts` — tree-sitter parser initialization and caching. Working code.
+- `packages/core/src/parser/extract.ts` — extraction coordinator routing files to language-specific extractors. Working code.
+- `packages/core/src/parser/queries/typescript.ts` (~500 lines) — full TypeScript/JavaScript extraction: functions, classes, methods, interfaces, type aliases, enums, variables, imports, exports, calls with complete metadata. Working code.
+- `packages/core/src/index.ts` — barrel export for all public types and functions. Working code.
 - `test/fixtures/sveltekit-app/` — test fixture directory structure (files exist).
-- `test/fixtures/ts-library/` — test fixture directory structure (files exist).
+- `test/fixtures/ts-library/` — test fixture with auth/, models/ directories (5 source files). Working fixtures with comprehensive coverage of all symbol kinds.
 
 **Root config files (KEEP, may need minor edits):**
 - `package.json` — npm workspaces config, scripts. Correct.
@@ -1148,17 +1251,17 @@ codegraph/
 │   │   ├── tsconfig.json
 │   │   ├── vitest.config.ts
 │   │   └── src/
-│   │       ├── index.ts
+│   │       ├── index.ts               ← IMPLEMENTED (barrel exports)
 │   │       ├── config/
-│   │       │   ├── languages.ts        ← HAS CODE (25 lines)
-│   │       │   └── ignore.ts           ← HAS CODE (227 lines)
+│   │       │   ├── languages.ts        ← IMPLEMENTED (25 lines)
+│   │       │   └── ignore.ts           ← IMPLEMENTED (226 lines)
 │   │       ├── walker/
-│   │       │   └── filesystem.ts       ← STUBBED (22 lines)
+│   │       │   └── filesystem.ts       ← IMPLEMENTED
 │   │       ├── parser/
-│   │       │   ├── tree-sitter.ts      ← empty
-│   │       │   ├── extract.ts          ← empty
+│   │       │   ├── tree-sitter.ts      ← IMPLEMENTED
+│   │       │   ├── extract.ts          ← IMPLEMENTED
 │   │       │   └── queries/
-│   │       │       ├── typescript.ts   ← empty
+│   │       │       ├── typescript.ts   ← IMPLEMENTED (~500 lines, all symbol kinds)
 │   │       │       ├── svelte.ts       ← empty
 │   │       │       └── prisma.ts       ← empty
 │   │       ├── resolution/
@@ -1254,7 +1357,12 @@ codegraph/
 ├── test/
 │   └── fixtures/
 │       ├── sveltekit-app/          # Keep existing fixture files
-│       └── ts-library/             # Keep existing fixture files
+│       └── ts-library/             # TS fixture with auth/ + models/ directories
+│           ├── src/auth/service.ts      # Class, methods w/ visibility/static/async
+│           ├── src/auth/validate.ts     # Exported function
+│           ├── src/models/types.ts      # Interfaces, types, enums, vars, arrow fns
+│           ├── src/models/index.ts      # Re-exports
+│           └── src/index.ts             # Barrel exports, export const
 │
 └── .codegraph/                     # gitignored, local data
     └── graphs/
@@ -1262,7 +1370,7 @@ codegraph/
 
 ### What NOT to do during restructuring
 
-- **Do NOT delete any file that has real code** — only `languages.ts`, `ignore.ts`, and `filesystem.ts` have implementation. Preserve all three exactly as they are.
+- **Do NOT delete any file that has real code** — Phase 1 is fully implemented with working extraction, parsing, and tests. Preserve all implemented files.
 - **Do NOT run `npm install` or `bun install`** — just set up the file structure and package.json files. Dependencies will be installed when development begins.
 - **Do NOT create `packages/mcp/`** — that's Phase 7, far in the future.
 - **Do NOT add Prisma to any package** — storage is the consumer's concern, not CodeGraph's.

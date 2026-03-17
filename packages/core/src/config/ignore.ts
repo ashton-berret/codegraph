@@ -1,7 +1,5 @@
-import ignore, { type Ignore } from 'ignore';
 import fs from 'fs/promises';
 import nodePath from 'path';
-import type { Path } from 'path-scurry';
 
 const DEFAULT_IGNORE_LIST = new Set([
     // Version Control
@@ -96,7 +94,7 @@ const DEFAULT_IGNORE_LIST = new Set([
     '.github',          // GitHub config, not code
     '.circleci',
     '.gitlab',
-    'fixtures',         // Test fixtures
+    // 'fixtures' removed - needed for test fixture indexing
     'snapshots',        // Jest snapshots
     '__snapshots__',
 ]);
